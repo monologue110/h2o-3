@@ -8,10 +8,11 @@ import water.fvec.Chunk;
 import water.fvec.Frame;
 import water.fvec.NewChunk;
 import water.fvec.Vec;
-import static water.rapids.SingleThreadRadixOrder.getSortedOXHeaderKey;
 import water.util.ArrayUtils;
 
 import java.util.Arrays;
+
+import static water.rapids.SingleThreadRadixOrder.getSortedOXHeaderKey;
 
 class BinaryMerge extends DTask<BinaryMerge> {
   long _numRowsInResult=0;  // returned to caller, so not transient
@@ -49,8 +50,11 @@ class BinaryMerge extends DTask<BinaryMerge> {
     private final long _base[]; // the col.min() of each column in the key
     private final int _fieldSizes[]; // the widths of each column in the key
     private final int _keySize; // the total width in bytes of the key, sum of field sizes
+    private final double _baseD[];  // the col.min() of each column in double
+    private final boolean _isNotDouble[]; // denote if a column is integer or double
+    private final double _maxD[];
 
-    FFSB( Frame frame, int msb, int shift, int fieldSizes[], long base[] ) { 
+    FFSB( Frame frame, int msb, int shift, int fieldSizes[], long base[], double baseD[], boolean isNotDouble[], double maxD[]) {
       assert -1<=msb && msb<=255; // left ranges from 0 to 255, right from -1 to 255
       _frame = frame;
       _msb = msb;
@@ -58,6 +62,9 @@ class BinaryMerge extends DTask<BinaryMerge> {
       _fieldSizes = fieldSizes;
       _keySize = ArrayUtils.sum(fieldSizes);
       _base = base;
+      _baseD = baseD;
+      _isNotDouble = isNotDouble;
+      _maxD = maxD;
       // Create fast lookups to go from chunk index to node index of that chunk
       Vec vec = _vec = frame.anyVec();
       _chunkNode = vec==null ? null : new int[vec.nChunks()];
@@ -68,6 +75,9 @@ class BinaryMerge extends DTask<BinaryMerge> {
 
     long min() { return (((long)_msb  ) << _shift) + _base[0]-1; } // the first key possible in this bucket
     long max() { return (((long)_msb+1) << _shift) + _base[0]-2; } // the last  key possible in this bucket
+
+    double minD() { return Double.longBitsToDouble(((long)_msb) << _shift) + _baseD[0];}
+    double maxD() { return Double.longBitsToDouble((((long)(_msb+1)) << _shift)-1L) + _baseD[0];}
   }
 
   // In X[Y], 'left'=i and 'right'=x
@@ -138,6 +148,12 @@ class BinaryMerge extends DTask<BinaryMerge> {
     // if _riteSB._msb==-1 then the values in riteMin and riteMax here are redundant and not used
     final long riteMin = _riteSB._msb==-1 ? -1 : _riteSB.min();  // the first key possible in this bucket
     final long riteMax = _riteSB._msb==-1 ? -1 : _riteSB.max();  // the last  key possible in this bucket
+
+    final double leftMinD = _leftSB._isNotDouble[0] ? 0: _leftSB.minD();
+    final double leftMaxD = _leftSB._isNotDouble[0] ? 0: _leftSB.maxD();
+
+    final double riteMinD = _riteSB._msb==-1? -1: (_riteSB._isNotDouble[0] ? 0: _riteSB.minD());
+    final double riteMaxD = _riteSB._msb==-1?-1: (_riteSB._isNotDouble[0] ? 0: _riteSB.maxD());
 
     _leftFrom =   (_riteSB._msb==-1 || leftMin>=riteMin || (_allLeft && _riteSB._msb==0  )) ? -1    : bsearchLeft(riteMin, /*retLow*/true , leftN);
     long leftTo = (_riteSB._msb==-1 || leftMax<=riteMax || (_allLeft && _riteSB._msb==255)) ? leftN : bsearchLeft(riteMax, /*retLow*/false, leftN);

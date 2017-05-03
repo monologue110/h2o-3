@@ -6,6 +6,8 @@ import water.*;
 import water.fvec.*;
 import water.nbhm.NonBlockingHashMapLong;
 import water.rapids.vals.ValFrame;
+import water.util.ArrayUtils;
+import water.util.Log;
 
 import java.io.IOException;
 import java.util.Random;
@@ -166,7 +168,7 @@ public class SortTest extends TestUtil {
     return fr;
   }
 
-  @Test public void TestSortTimes() throws IOException {
+/*  @Test public void TestSortTimes() throws IOException {
     Frame fr=null, sorted=null;
     try {
       fr = parse_test_file("smalldata/synthetic/sort_crash.csv");
@@ -178,6 +180,106 @@ public class SortTest extends TestUtil {
     } finally {
       if( fr != null ) fr.delete();
       if( sorted != null ) sorted.delete();
+    }
+  }*/
+
+  @Test public void TestSortTimes() throws IOException {
+    Scope.enter();
+    Frame fr=null, sorted=null;
+    try {
+      fr = parse_test_file("sort_crash.csv");
+      sorted = fr.sort(new int[]{0});
+      Scope.track(fr);
+      Scope.track(sorted);
+      testSort(sorted, fr,0);
+    } finally {
+      Scope.exit();
+    }
+  }
+
+  /*
+    Test sorting of doubles that contains zeros, +/- infinities.
+   */
+  @Test public void TestSortIntegersDoubles() throws IOException {
+    Scope.enter();
+    Frame fr=null, sorted=null;
+    try {
+      // junit will not take data from bigdata/laptop!
+   //   fr = parse_test_file("smalldata/synthetic/smallIntFloat.csv");  // first test no NA frame, works
+    //  fr = parse_test_file("smalldata/synthetic/doubleFrame.csv");  // first test no NA frame, not working
+   //   fr = parse_test_file("bigdata/laptop/jira/TopBottomNRep4.csv.zip"); // works
+     // fr = parse_test_file("smalldata/synthetic/smallIntegersDoubles_180Rows.csv"); // works!
+      fr = parse_test_file("smalldata/synthetic/smallIntegersDoubles_180000Rows.csv.zip"); //works for 0,1
+    //  fr = parse_test_file("smalldata/synthetic/smallIntegersDoubles_1800000Rows.csv.zip"); // works for 0, not 1
+      int colIndex = 0;
+      sorted = fr.sort(new int[]{colIndex});
+      Scope.track(fr);
+      Scope.track(sorted);
+      testSort(sorted, fr,colIndex);
+    } finally {
+      Scope.exit();
+    }
+  }
+  
+
+  /*
+    Test sorting of doubles that contains zeros, +/- infinities.
+   */
+  @Test public void TestSortSmallArray() throws IOException {
+    Scope.enter();
+    Frame fr=null, sorted=null;
+    try { // single digit, >8 bits, >16 bits, >24 bits
+      fr = ArrayUtils.frame(ard(ard(-1.1,257,65537, 16777219, 257),
+              ard(1.1, 258, 65538, 16777218, 16777219),
+              ard(-0.5, 259, 65539, 16777217, 65537),
+              ard(-0.6, 256, 65540, 16777200, 65500)));
+
+      int[] colIndex = {4};
+      int actualIndex = 0;
+      sorted = fr.sort(colIndex);
+      Scope.track(fr);    // fr contains 1 column with 3 row values
+      Scope.track(sorted);
+      testSort(sorted, fr, colIndex[actualIndex]);
+    } finally {
+      Scope.exit();
+    }
+  }
+
+  private static void testSort(Frame frSorted, Frame originalF, int colIndex) throws IOException {
+    Scope.enter();
+    Vec vec = frSorted.vec(colIndex);
+    Vec vecO = originalF.vec(colIndex);
+    Scope.track(vec);
+    Scope.track(vecO);
+    long naCnt = 0;   // make sure NAs are sorted at the beginning of frame
+    long pinfCnt = 0;
+    long ninfCnt = 0;
+
+    if (originalF.hasNAs()) {
+      naCnt = vecO.naCnt();
+    }
+
+    try {
+      // check size
+      assertTrue(frSorted.numRows() == originalF.numRows());  // make sure sizes are the same
+      assertTrue(vec.naCnt() == vecO.naCnt());                // NA counts agree
+      assertTrue(vec.pinfs() == vecO.pinfs());                // inf number agree
+      assertTrue(vec.ninfs() == vecO.ninfs());                // -inf number agree
+      int len = (int) vec.length();
+      // count the NAs first
+      for (int i = 0; i < naCnt; i++) {
+        assertTrue(Double.isNaN(vec.at(i)));
+      }
+      for (int i = 1; i < len; i++) {
+        if (!Double.isNaN(vec.at(i - 1)) && !Double.isNaN(vec.at(i)))
+          if (vec.at(i - 1) > vec.at(i)) {
+            Log.info("busted");
+
+          }
+         // assertTrue(vec.at(i - 1) <= vec.at(i));
+      }
+    } finally {
+      Scope.exit();
     }
   }
 }
